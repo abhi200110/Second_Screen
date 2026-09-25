@@ -282,6 +282,6 @@ sequenceDiagram
   - Updated application title in `strings.xml` to `Second Screen`.
   - Updated UI TopAppBar title and documentation headers to `Second Screen (`SecondScreen`)`.
   - Linked and published to GitHub remote: [`https://github.com/abhi200110/Second_Screen.git`](https://github.com/abhi200110/Second_Screen.git).
-
-
-
+- **GitHub Release Publication (v1.0.0)**:
+  - Created official release on GitHub: [`https://github.com/abhi200110/Second_Screen/releases/tag/v1.0.0`](https://github.com/abhi200110/Second_Screen/releases/tag/v1.0.0).
+  - Attached production-ready signed APK: [`SecondScreen-v1.0.0.apk`](https://github.com/abhi200110/Second_Screen/releases/download/v1.0.0/SecondScreen-v1.0.0.apk) (10.8 MB).
