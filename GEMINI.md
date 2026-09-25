@@ -259,3 +259,22 @@ sequenceDiagram
 - **Build & Device Verification**:
   - Successfully compiled debug APK with 0 errors via `./gradlew.bat assembleDebug`.
   - Installed and verified live on physical OnePlus Pad 2 (Snapdragon 8 Gen 3, Android 16 / OxygenOS 16). All services initialized cleanly.
+
+### Milestone 8: Release Build Fix, Automated Test Suite & Repo Readiness (Completed)
+- **Release Build Blocker Resolved (`app/src/main/res/xml/data_extraction_rules.xml`)**:
+  - Added required `domain="root"` attributes to `<exclude path="." />` tags, eliminating fatal `lintVitalRelease` errors.
+  - Verified `./gradlew.bat assembleRelease` finishes with exit code 0.
+- **Location Permission Pairing (`app/src/main/AndroidManifest.xml`)**:
+  - Added paired `ACCESS_COARSE_LOCATION` alongside `ACCESS_FINE_LOCATION` to satisfy Android 12+ location privacy rules.
+- **Automated Protocol & Pipeline Unit Test Suite (`app/src/test/java/com/example/pad2display/ProtocolTest.kt`)**:
+  - Configured JUnit 4 test runner and `testOptions { unitTests.isReturnDefaultValues = true }`.
+  - Implemented automated tests for:
+    - RTSP `CSeq` sanitization and CRLF injection attack resistance.
+    - `Content-Length` bounds checking and OOM prevention.
+    - 3K EDID 1.4 checksum and 128-byte layout validation.
+    - MPEG-TS packet sync detection (`0x47`), PES video stream ID extraction (`0xE0`), and NAL unit reassembly.
+  - Verified `./gradlew.bat test` passes 100% of unit tests across both debug and release variants.
+- **Version Control & Repository Initialization**:
+  - Created standard Android `.gitignore` excluding build artifacts, Gradle caches, local SDK properties, and APK binaries.
+  - Initialized Git repository on `master` branch with clean initial commit (`nothing to commit, working tree clean`).
+
