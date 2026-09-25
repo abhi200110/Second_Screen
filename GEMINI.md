@@ -277,9 +277,11 @@ sequenceDiagram
 - **Version Control & Repository Initialization**:
   - Created standard Android `.gitignore` excluding build artifacts, Gradle caches, local SDK properties, and APK binaries.
   - Initialized Git repository on `master` branch with clean initial commit (`nothing to commit, working tree clean`).
-- **Project Rename to SecondScreen**:
+- **Project Rename to SecondScreen & GitHub Publication**:
   - Renamed root project in `settings.gradle.kts` to `SecondScreen`.
   - Updated application title in `strings.xml` to `Second Screen`.
   - Updated UI TopAppBar title and documentation headers to `Second Screen (`SecondScreen`)`.
+  - Linked and published to GitHub remote: [`https://github.com/abhi200110/Second_Screen.git`](https://github.com/abhi200110/Second_Screen.git).
+
 
 
