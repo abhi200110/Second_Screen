@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Pad2WirelessDisplay"
+rootProject.name = "SecondScreen"
 include(":app")

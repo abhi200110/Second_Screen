@@ -375,9 +375,9 @@ fun DiagnosticScreen(
                 TopAppBar(
                     title = {
                         Column {
-                            Text("Pad 2 Wireless Display", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                            Text("Second Screen", fontWeight = FontWeight.Bold, fontSize = 20.sp)
                             Text(
-                                "Miracast Sink Receiver (MS-MICE & Wi-Fi Direct)",
+                                "Wireless Display Receiver (MS-MICE & Wi-Fi Direct)",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

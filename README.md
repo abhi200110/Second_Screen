@@ -1,7 +1,7 @@
-# Pad 2 Wireless Display (`Pad2WirelessDisplay`)
-### Windows `Win + K` → OnePlus Pad 2 Wireless Secondary Display
+# Second Screen (`SecondScreen`)
+### Windows `Win + K` → Android Wireless Secondary Display (Miracast / MS-MICE)
 
-An Android Wi-Fi Display (WFD / Miracast) Sink receiver designed specifically for the **OnePlus Pad 2** (Snapdragon 8 Gen 3, Android 16 / OxygenOS 16) that turns the tablet into a wireless secondary monitor for Windows 10/11 PCs (`Win + K` / Cast).
+An ultra-low-latency Wi-Fi Display (WFD / Miracast) Sink receiver designed for Android tablets (optimized for **OnePlus Pad 2** Snapdragon 8 Gen 3 with 3K 7:5 EDID) that turns the tablet into a high-performance wireless secondary monitor for Windows 10/11 PCs (`Win + K` / Cast / Extend Display).
 
 ---
 
