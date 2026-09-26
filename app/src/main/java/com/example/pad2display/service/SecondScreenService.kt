@@ -32,6 +32,7 @@ import com.example.pad2display.mice.MiceServerState
 import com.example.pad2display.rtsp.DEFAULT_RTSP_PORT
 import com.example.pad2display.rtsp.RtspEngineState
 import com.example.pad2display.rtsp.RtspServer
+import com.example.pad2display.uibc.UibcManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,6 +83,8 @@ class SecondScreenService : Service() {
     lateinit var miceDiscovery: MiceDiscoveryService
         private set
     lateinit var miceServer: MiceServer
+        private set
+    lateinit var uibcManager: UibcManager
         private set
 
     // ------------------------------------------------------------------------
@@ -178,6 +181,9 @@ class SecondScreenService : Service() {
         try {
             videoDecoder.releaseCodec()
         } catch (_: Exception) {}
+        try {
+            uibcManager.disconnect()
+        } catch (_: Exception) {}
 
         serviceScope.coroutineContext[Job]?.cancel()
         super.onDestroy()
@@ -187,6 +193,11 @@ class SecondScreenService : Service() {
     // Pipeline Initialization
     // ------------------------------------------------------------------------
     private fun initPipeline() {
+        // User Input Back Channel (UIBC) Manager
+        uibcManager = UibcManager { logMsg ->
+            addLog(logMsg)
+        }
+
         // Video Decoder
         videoDecoder = VideoDecoder { logMsg ->
             addLog(logMsg)
@@ -231,6 +242,7 @@ class SecondScreenService : Service() {
             },
             onStreamStopped = {
                 addLog("Media stream stopped. Resetting RTP receiver and decoder...")
+                uibcManager.onDisabled()
                 rtpReceiver.expectedSenderIp = null
                 rtpReceiver.stop()
                 videoDecoder.releaseCodec()
@@ -255,6 +267,12 @@ class SecondScreenService : Service() {
             }
         ).apply {
             resolutionPreference = _resolutionPreference.value
+            onUibcNegotiated = { remoteIp, port ->
+                uibcManager.onNegotiated(remoteIp, port)
+            }
+            onUibcDisabled = {
+                uibcManager.onDisabled()
+            }
         }
 
         // MS-MICE Discovery
@@ -424,6 +442,9 @@ class SecondScreenService : Service() {
      */
     fun disconnectSession() {
         addLog("Disconnecting streaming session...")
+        try {
+            uibcManager.disconnect()
+        } catch (_: Exception) {}
         rtspServer.stop()
         rtpReceiver.stop()
         videoDecoder.releaseCodec()

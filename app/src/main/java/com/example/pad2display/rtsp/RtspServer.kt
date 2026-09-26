@@ -70,6 +70,12 @@ class RtspServer(
     private var keepAliveJob: Job? = null
 
     /**
+     * UIBC callbacks triggered when Source enables or disables the User Input Back Channel.
+     */
+    var onUibcNegotiated: ((remoteIp: String, port: Int) -> Unit)? = null
+    var onUibcDisabled: (() -> Unit)? = null
+
+    /**
      * Request an immediate IDR Keyframe from Windows Source (wfd_idr_request).
      * Commands Windows NVENC/QuickSync/AMF hardware encoder to generate a fresh I-frame
      * with parameter sets (SPS/PPS) to instantly recover video decoding without delay.
@@ -609,8 +615,26 @@ class RtspServer(
                 if (isTriggerTeardown) {
                     log(">>> Received wfd_trigger_method: TEARDOWN from Source! Closing stream...")
                     _engineState.value = _engineState.value.copy(isStreaming = false)
+                    onUibcDisabled?.invoke()
                     onStreamStopped()
                     return okResponse
+                }
+
+                // Stage 6 / M4 or M14: User Input Back Channel (UIBC) negotiation
+                if (body.contains("wfd_uibc", ignoreCase = true)) {
+                    val portMatch = Regex("port=(\\d+)", RegexOption.IGNORE_CASE).find(body)
+                    val uibcPort = portMatch?.groupValues?.get(1)?.toIntOrNull()
+                    val isEnable = Regex("wfd_uibc_setting:\\s*enable", RegexOption.IGNORE_CASE).containsMatchIn(body) ||
+                            (uibcPort != null && uibcPort > 0 && !Regex("wfd_uibc_setting:\\s*disable", RegexOption.IGNORE_CASE).containsMatchIn(body))
+                    val isDisable = Regex("wfd_uibc_setting:\\s*disable", RegexOption.IGNORE_CASE).containsMatchIn(body)
+
+                    if (isEnable && uibcPort != null && uibcPort > 0) {
+                        log(">>> UIBC Enabled by Source on port $uibcPort! Triggering UIBC connection to $remoteIp:$uibcPort...")
+                        onUibcNegotiated?.invoke(remoteIp, uibcPort)
+                    } else if (isDisable) {
+                        log(">>> UIBC Disabled by Source")
+                        onUibcDisabled?.invoke()
+                    }
                 }
 
                 okResponse
@@ -620,6 +644,7 @@ class RtspServer(
             "TEARDOWN" -> {
                 log(">>> Received TEARDOWN from Source! Stopping media stream...")
                 _engineState.value = _engineState.value.copy(isStreaming = false)
+                onUibcDisabled?.invoke()
                 onStreamStopped()
                 buildString {
                     append("RTSP/1.0 200 OK\r\n")
@@ -739,7 +764,7 @@ class RtspServer(
             // Port1 MUST be 0 per AOSP WifiDisplaySource.cpp:800!
             append("wfd_client_rtp_ports: RTP/AVP/UDP;unicast $rtpPort 0 mode=play\r\n")
             append("wfd_content_protection: none\r\n")
-            append("wfd_uibc_capability: none\r\n")
+            append("wfd_uibc_capability: input_category_list=GENERIC, HIDC; generic_cap_list=Mouse, SingleTouch, MultiTouch; hidc_cap_list=none; port=none\r\n")
             append("wfd_connector_type: 05\r\n")
             append("wfd_standby_resume_capability: none\r\n")
 

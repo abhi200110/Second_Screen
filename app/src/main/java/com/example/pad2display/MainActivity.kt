@@ -35,12 +35,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.pad2display.diagnostic.*
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.pad2display.uibc.GenericInputType
+import com.example.pad2display.uibc.TouchPointer
+import com.example.pad2display.uibc.UibcCoordinateTransformer
+import com.example.pad2display.uibc.UibcManager
 import com.example.pad2display.media.DEFAULT_RTP_PORT
 import com.example.pad2display.media.DisplayScaleMode
 import com.example.pad2display.media.ResolutionPreference
@@ -240,12 +245,26 @@ fun DiagnosticScreen(
         }
     }
 
+    val uibcManager = service?.uibcManager
+    val isUibcConnected by (uibcManager?.isUibcConnected?.collectAsState() ?: remember { mutableStateOf(false) })
+    val isTouchEnabled by (uibcManager?.isTouchEnabled?.collectAsState() ?: remember { mutableStateOf(true) })
+    val uibcLastEvent by (uibcManager?.lastEventInfo?.collectAsState() ?: remember { mutableStateOf("Idle") })
+    val uibcPacketsSent by (uibcManager?.packetsSent?.collectAsState() ?: remember { mutableStateOf(0L) })
+
     if (isFullscreenPlayerOpen) {
         FullscreenPlayerScreen(
             activeFormat = activeFormat,
             rtpStats = rtpStats,
             rtspState = rtspState,
             selectedResolution = selectedResolution,
+            uibcManager = uibcManager,
+            isUibcConnected = isUibcConnected,
+            isTouchEnabled = isTouchEnabled,
+            uibcLastEvent = uibcLastEvent,
+            uibcPacketsSent = uibcPacketsSent,
+            onToggleTouch = {
+                uibcManager?.setTouchEnabled(!isTouchEnabled)
+            },
             onAttachSurface = { surface ->
                 service?.attachSurface(surface)
             },
@@ -565,6 +584,12 @@ fun FullscreenPlayerScreen(
     rtpStats: RtpReceiverStats,
     rtspState: RtspEngineState,
     selectedResolution: ResolutionPreference,
+    uibcManager: UibcManager?,
+    isUibcConnected: Boolean,
+    isTouchEnabled: Boolean,
+    uibcLastEvent: String,
+    uibcPacketsSent: Long,
+    onToggleTouch: () -> Unit,
     onAttachSurface: (android.view.Surface) -> Unit,
     onDetachSurface: () -> Unit,
     onResolutionChanged: (ResolutionPreference) -> Unit,
@@ -579,7 +604,6 @@ fun FullscreenPlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable { showControls = !showControls }
     ) {
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
@@ -627,9 +651,89 @@ fun FullscreenPlayerScreen(
                                 onDetachSurface()
                             }
                         })
+
+                        // UIBC Touch & Stylus event listener
+                        setOnTouchListener { view, event ->
+                            // 3-finger tap gesture toggles controls overlay
+                            if (event.pointerCount >= 3) {
+                                if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN ||
+                                    event.actionMasked == MotionEvent.ACTION_DOWN) {
+                                    showControls = !showControls
+                                }
+                                return@setOnTouchListener true
+                            }
+
+                            if (!isTouchEnabled || !isUibcConnected) {
+                                if (event.action == MotionEvent.ACTION_UP) {
+                                    showControls = !showControls
+                                }
+                                return@setOnTouchListener true
+                            }
+
+                            val videoW = activeFormat?.width ?: selectedResolution.nominalWidth
+                            val videoH = activeFormat?.height ?: selectedResolution.nominalHeight
+
+                            val pointerCount = event.pointerCount.coerceIn(1, 10)
+                            val pointers = (0 until pointerCount).map { i ->
+                                val (nx, ny) = UibcCoordinateTransformer.transform(
+                                    touchX = event.getX(i),
+                                    touchY = event.getY(i),
+                                    viewWidth = view.width,
+                                    viewHeight = view.height,
+                                    videoWidth = videoW,
+                                    videoHeight = videoH,
+                                    scaleMode = scaleMode
+                                )
+                                val toolType = event.getToolType(i)
+                                val isStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS ||
+                                        toolType == MotionEvent.TOOL_TYPE_ERASER
+                                TouchPointer(
+                                    pointerId = event.getPointerId(i),
+                                    x = nx,
+                                    y = ny,
+                                    isStylus = isStylus,
+                                    pressure = event.getPressure(i)
+                                )
+                            }
+
+                            val type = when (event.actionMasked) {
+                                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN ->
+                                    GenericInputType.LEFT_MOUSE_DOWN_TOUCH_DOWN
+                                MotionEvent.ACTION_MOVE ->
+                                    GenericInputType.MOUSE_MOVE_TOUCH_MOVE
+                                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL ->
+                                    GenericInputType.LEFT_MOUSE_UP_TOUCH_UP
+                                else -> null
+                            }
+
+                            if (type != null) {
+                                uibcManager?.sendTouchEvent(type, pointers)
+                            }
+
+                            true
+                        }
                     }
                 }
             )
+        }
+
+        // Floating mini-button to reveal controls overlay when hidden
+        if (!showControls) {
+            IconButton(
+                onClick = { showControls = true },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .size(42.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = "Show Controls",
+                    tint = Color.White
+                )
+            }
         }
 
         AnimatedVisibility(
@@ -682,10 +786,61 @@ fun FullscreenPlayerScreen(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            // UIBC Status Badge
+                            Surface(
+                                color = when {
+                                    isUibcConnected && isTouchEnabled -> Color(0xFF00391C)
+                                    isUibcConnected && !isTouchEnabled -> Color(0xFF3E2723)
+                                    else -> Color(0xFF263238)
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    when {
+                                        isUibcConnected && isTouchEnabled -> Color(0xFF00E676)
+                                        isUibcConnected && !isTouchEnabled -> Color(0xFFFFB74D)
+                                        else -> Color.Gray
+                                    }
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                when {
+                                                    isUibcConnected && isTouchEnabled -> Color(0xFF00E676)
+                                                    isUibcConnected && !isTouchEnabled -> Color(0xFFFFB74D)
+                                                    else -> Color.Gray
+                                                }
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        when {
+                                            isUibcConnected && isTouchEnabled -> "Touch/Pen Active"
+                                            isUibcConnected && !isTouchEnabled -> "Touch Paused"
+                                            else -> "UIBC Ready"
+                                        },
+                                        color = when {
+                                            isUibcConnected && isTouchEnabled -> Color(0xFF00E676)
+                                            isUibcConnected && !isTouchEnabled -> Color(0xFFFFB74D)
+                                            else -> Color.LightGray
+                                        },
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            "${rtpStats.bitrateMbps} Mbps • ${rtpStats.packetsReceived} packets • Target: ${selectedResolution.title}",
+                            "${rtpStats.bitrateMbps} Mbps • ${rtpStats.packetsReceived} pkts • Target: ${selectedResolution.title} • UIBC: $uibcPacketsSent evts ($uibcLastEvent)",
                             color = Color.White.copy(alpha = 0.8f),
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace
@@ -696,6 +851,24 @@ fun FullscreenPlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // 1-Tap Touch/Pen Toggle Button
+                        Button(
+                            onClick = onToggleTouch,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isTouchEnabled) Color(0xFF1B5E20) else Color(0xFFBF360C),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isTouchEnabled) Icons.Default.TouchApp else Icons.Default.PanTool,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (isTouchEnabled) "Touch: ON" else "Touch: OFF", fontSize = 12.sp)
+                        }
+
                         // Scale Mode Switcher (Fit / Fill / Stretch)
                         Button(
                             onClick = {
@@ -786,6 +959,12 @@ fun FullscreenPlayerScreen(
                             Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Disconnect", fontSize = 12.sp)
+                        }
+
+                        IconButton(
+                            onClick = { showControls = false }
+                        ) {
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Hide Controls", tint = Color.White)
                         }
                     }
                 }
