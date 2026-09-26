@@ -405,5 +405,14 @@ sequenceDiagram
   - **Antigravity Companion UI Extension**: Side-pane extension for real-time tablet telemetry, 1-click ADB commands, live tablet screen snapshot, and filtered logcat terminal.
   - **Comprehensive Automated Tests**: 100% test pass rate on `ProtocolTest` and `UibcTest`.
 
+### Windows Discovery & MS-MICE TXT Fix (Completed)
+- **MS-MICE DNS-SD / mDNS Compliance (`MiceDiscoveryService.kt`)**:
+  - Enclosed `container_id` in `{...}` curly braces (`{$containerUuid}`) as strictly required by `[MS-MICE]` Section 2.2.1 for Windows 10/11 GUID parsers.
+  - Added explicit `wfd_ctrl_port` (`7236`) TXT attribute so Windows resolves the RTSP endpoint directly from DNS-SD.
+- **P2P Discovery De-Confliction (`MainActivity.kt`)**:
+  - Removed competing discovery loops and restricted `p2pController.startDiscovery` strictly to `DIRECT_P2P` mode.
+  - Eliminated repetitive `Discovery failed: Internal Framework Error (code 0)` during Wi-Fi Router mode.
+
+
 
 
