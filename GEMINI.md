@@ -392,4 +392,18 @@ sequenceDiagram
   - Tested RTSP M4/M14 port extraction regex.
   - Unit tests passed (`./gradlew.bat test`), debug build passed, release build passed (`./gradlew.bat assembleRelease`).
 
+### Production Release v1.2.0: UIBC Touch & Stylus Control (Completed)
+- **Version**: `1.2.0` (versionCode 3)
+- **Release Branch**: `main` (commit `b302b73`)
+- **Git Tag**: [`v1.2.0`](https://github.com/abhi200110/Second_Screen/releases/tag/v1.2.0)
+- **Artifact**: `SecondScreen-v1.2.0.apk` (10.8 MB, signed with APK Signature Scheme v2 & v3)
+- **Included Features**:
+  - **User Input Back Channel (UIBC)**: WFD Specification Section 4.11 binary protocol engine supporting SingleTouch, MultiTouch, and Pen/Stylus input from OnePlus Pad 2 to Windows desktop.
+  - **Zero-Latency Network Client**: UIBC TCP transport with `TCP_NODELAY` and non-blocking backpressure channel (`DROP_OLDEST`).
+  - **Coordinate Transformation**: Sub-pixel normalization mapping touch input to video resolution across `FIT`, `FILL_CROP`, and `STRETCH` scaling modes.
+  - **Gesture Protection & Accessibility**: 3-finger tap and floating overlay buttons ensuring host controls remain accessible while full-screen touch control is active.
+  - **Antigravity Companion UI Extension**: Side-pane extension for real-time tablet telemetry, 1-click ADB commands, live tablet screen snapshot, and filtered logcat terminal.
+  - **Comprehensive Automated Tests**: 100% test pass rate on `ProtocolTest` and `UibcTest`.
+
+
 
