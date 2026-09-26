@@ -124,9 +124,9 @@ class SecondScreenService : Service() {
         _instance.value = this
 
         createNotificationChannel()
+        initPipeline()
         startForegroundServiceNotification()
 
-        initPipeline()
         startStateObservers()
         startWatchdog()
 
@@ -465,8 +465,8 @@ class SecondScreenService : Service() {
 
     private fun buildNotification(): Notification {
         val state = _connectionState.value
-        val format = videoDecoder.activeFormat.value
-        val stats = rtpReceiver.stats.value
+        val format = if (::videoDecoder.isInitialized) videoDecoder.activeFormat.value else null
+        val stats = if (::rtpReceiver.isInitialized) rtpReceiver.stats.value else null
 
         val title = when (state) {
             ConnectionState.STREAMING -> "Wireless Display Active"
@@ -481,7 +481,9 @@ class SecondScreenService : Service() {
         val text = when (state) {
             ConnectionState.STREAMING -> {
                 val res = format?.displayString ?: _resolutionPreference.value.title.substringBefore(" ")
-                "$res • ${stats.bitrateMbps} Mbps • ${stats.packetsReceived} pkts"
+                val mbps = stats?.bitrateMbps ?: 0.0
+                val pkts = stats?.packetsReceived ?: 0
+                "$res • $mbps Mbps • $pkts pkts"
             }
             ConnectionState.DISCOVERING -> {
                 "Listening on ${_connectionMode.value.title.substringBefore(" ")} • Ready for Win + K"
