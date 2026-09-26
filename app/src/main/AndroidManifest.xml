@@ -32,6 +32,12 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="tiramisu" />
 
+    <!-- Foreground Service Permissions: Keeps wireless display session alive during app switches and rotation -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -55,6 +61,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground Service hosting the Miracast / MS-MICE RTSP, RTP and Video Decoding Engine -->
+        <service
+            android:name=".service.SecondScreenService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|mediaPlayback" />
     </application>
 
 </manifest>

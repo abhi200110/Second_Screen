@@ -100,4 +100,42 @@ class ProtocolTest {
 
         assertTrue("Demuxer should extract video access units on payload unit start", videoUnitsExtracted >= 1)
     }
+
+    @Test
+    fun testConnectionStateLifecycle() {
+        val states = com.example.pad2display.service.ConnectionState.entries
+        assertEquals(7, states.size)
+
+        // Validate STREAMING state properties
+        val streaming = com.example.pad2display.service.ConnectionState.STREAMING
+        assertTrue("STREAMING must have isStreaming == true", streaming.isStreaming)
+        assertTrue("STREAMING must have isConnected == true", streaming.isConnected)
+
+        // Validate DISCONNECTED state properties
+        val disconnected = com.example.pad2display.service.ConnectionState.DISCONNECTED
+        assertTrue("DISCONNECTED must have isStreaming == false", !disconnected.isStreaming)
+        assertTrue("DISCONNECTED must have isConnected == false", !disconnected.isConnected)
+
+        // Validate INTERRUPTED and RECONNECTING recovery states
+        val interrupted = com.example.pad2display.service.ConnectionState.INTERRUPTED
+        assertTrue("INTERRUPTED must have isStreaming == false", !interrupted.isStreaming)
+        assertTrue("INTERRUPTED must have isConnected == false", !interrupted.isConnected)
+
+        val reconnecting = com.example.pad2display.service.ConnectionState.RECONNECTING
+        assertEquals("Reconnecting", reconnecting.title)
+    }
+
+    @Test
+    fun testMirrorConnectionModes() {
+        val modes = com.example.pad2display.service.MirrorConnectionMode.entries
+        assertEquals(2, modes.size)
+
+        val mice = com.example.pad2display.service.MirrorConnectionMode.INFRASTRUCTURE_MICE
+        assertTrue("MICE mode title must contain MS-MICE", mice.title.contains("MS-MICE"))
+        assertEquals("RECOMMENDED", mice.badge)
+
+        val p2p = com.example.pad2display.service.MirrorConnectionMode.DIRECT_P2P
+        assertTrue("P2P mode title must contain Wi-Fi Direct", p2p.title.contains("Wi-Fi Direct"))
+        assertEquals("OFFLINE", p2p.badge)
+    }
 }

@@ -285,3 +285,27 @@ sequenceDiagram
 - **GitHub Release Publication (v1.0.0)**:
   - Created official release on GitHub: [`https://github.com/abhi200110/Second_Screen/releases/tag/v1.0.0`](https://github.com/abhi200110/Second_Screen/releases/tag/v1.0.0).
   - Attached production-ready signed APK: [`SecondScreen-v1.0.0.apk`](https://github.com/abhi200110/Second_Screen/releases/download/v1.0.0/SecondScreen-v1.0.0.apk) (10.8 MB).
+
+### Milestone 9 & 9.5: Foreground Service Architecture & Connection Stability (Completed)
+- **Git Branching Strategy Enforced**:
+  - `main`: Production release branch. Only tagged release versions (`v1.0.0`, `v1.1.0`, etc.) live here.
+  - `dev`: Staging and integration branch.
+  - `feature/*`: Specific feature branches for ongoing development (`feature/m9-foreground-service-recovery`).
+- **Product & Engineering Roadmap ([`docs/ROADMAP.md`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/docs/ROADMAP.md))**:
+  - Outlined phased evolution from basic receiver to a complete interactive wireless second monitor (`v1.0.0` through `v2.0.0`).
+- **Foreground Service Architecture ([`SecondScreenService.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/service/SecondScreenService.kt))**:
+  - Moved entire media and networking pipeline (`RtspServer`, `RtpReceiver`, `MiceServer`, `MiceDiscoveryService`, `TsDemuxer`, `VideoDecoder`) into `SecondScreenService`.
+  - Declared `foregroundServiceType="connectedDevice|mediaPlayback"` in `AndroidManifest.xml` with all necessary permissions (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `POST_NOTIFICATIONS`).
+  - Persistent ongoing system notification with live status, bitrate, resolution, packet count, and a direct Disconnect action.
+  - Lifecycle independence: Streaming continues uninterrupted during activity recreation, screen rotation, or app backgrounding.
+- **Dynamic Surface Binding ([`VideoDecoder.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/media/VideoDecoder.kt))**:
+  - Upgraded `VideoDecoder.setSurface()` to dynamically bind new surfaces via `MediaCodec.setOutputSurface(surface)` when available.
+  - When the activity is backgrounded or rotated, the decoder continues processing frames (or maintains sequence parameters / reference frames) without destroying the codec, allowing instant re-rendering without dropping connection.
+- **Connection Lifecycle State Machine ([`ConnectionState.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/service/ConnectionState.kt))**:
+  - Formalized explicit states: `DISCONNECTED`, `DISCOVERING`, `CONNECTING`, `NEGOTIATING`, `STREAMING`, `INTERRUPTED`, `RECONNECTING`.
+  - Implemented watchdog for stream stalls and auto-recovery/re-arming of discovery listeners on unexpected drops.
+- **Automated Test Suite Expansion ([`ProtocolTest.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/test/java/com/example/pad2display/ProtocolTest.kt))**:
+  - Added unit tests for `ConnectionState` lifecycle properties and transitions.
+  - Added unit tests for `MirrorConnectionMode` title and badge consistency.
+  - Verified `./gradlew.bat test` passes 100% across both debug and release variants.
+

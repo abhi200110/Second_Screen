@@ -32,10 +32,22 @@ class VideoDecoder(
     @Synchronized
     fun setSurface(surface: Surface?) {
         renderSurface = surface
-        if (surface != null) {
+        if (surface != null && surface.isValid) {
+            val c = codec
+            if (c != null && isConfigured) {
+                try {
+                    c.setOutputSurface(surface)
+                    log("Dynamically re-attached Surface to active hardware decoder (${_activeFormat.value?.displayString ?: "running"})")
+                    return
+                } catch (e: Exception) {
+                    log("Dynamic setOutputSurface failed ($e), re-initializing codec on new surface")
+                }
+            }
             initCodec(surface)
         } else {
-            releaseCodec()
+            // When surface is detached (e.g. app in background or device rotating),
+            // do not release codec immediately so SPS/PPS state and decoder continuity are kept alive!
+            log("Surface detached (in background / rotating). Decoder keeping state alive.")
         }
     }
 
@@ -56,6 +68,7 @@ class VideoDecoder(
 
             codec = newCodec
             isConfigured = true
+            renderSurface = surface
             framesRendered = 0L
             log("Hardware H.264 Video Decoder started on Surface (${newCodec.name})")
 
@@ -67,11 +80,14 @@ class VideoDecoder(
                     try {
                         val outIndex = c.dequeueOutputBuffer(bufferInfo, 10000)
                         if (outIndex >= 0) {
-                            // Render frame to surface immediately!
-                            c.releaseOutputBuffer(outIndex, true)
-                            framesRendered++
-                            if (framesRendered % 300L == 1L) {
-                                log("Video pipeline rendering active: $framesRendered frames displayed")
+                            val currentSurface = renderSurface
+                            val shouldRender = currentSurface != null && currentSurface.isValid
+                            c.releaseOutputBuffer(outIndex, shouldRender)
+                            if (shouldRender) {
+                                framesRendered++
+                                if (framesRendered % 300L == 1L) {
+                                    log("Video pipeline rendering active: $framesRendered frames displayed")
+                                }
                             }
                         } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                             val newFormat = c.outputFormat
