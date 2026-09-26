@@ -366,3 +366,30 @@ sequenceDiagram
   - Bidirectional M16 keep-alive exchanges every 10 seconds.
   - Comprehensive unit test suite with 100% pass rate.
 
+### Milestone 10: User Input Back Channel (UIBC) — Touch & Stylus Control (Completed)
+- **UIBC Capability Advertisement (`rtsp/RtspServer.kt`)**:
+  - In RTSP M3 capabilities exchange, advertises `wfd_uibc_capability: input_category_list=GENERIC, HIDC; generic_cap_list=Mouse, SingleTouch, MultiTouch; hidc_cap_list=none; port=none`.
+  - In M4 or M14 `SET_PARAMETER`, parses Windows Source response containing `port=<port>` and `wfd_uibc_setting: enable`/`disable`.
+  - Signals UIBC lifecycle transitions via `onUibcNegotiated(remoteIp, port)` and `onUibcDisabled()`.
+- **WFD Section 4.11 UIBC Binary Protocol Engine (`uibc/UibcProtocol.kt`)**:
+  - Formats Common Packet Header: Version `0`, Timestamp flag `0`, InputCategory `0` (Generic), 16-bit big-endian payload length.
+  - Builds Generic Input Format: SingleTouch (`0x01`), MultiTouch (`0x02`), and Mouse (`0x00`).
+  - Implements 16-bit word alignment padding for odd-length input payloads per WFD Spec Section 4.11.1.
+- **Coordinate Transformation & Scaling Correction (`uibc/UibcCoordinateTransformer.kt`)**:
+  - Normalizes tablet screen touch pixels into Windows video stream resolution coordinate space `[0..videoWidth-1, 0..videoHeight-1]`.
+  - Supports `FIT` (letterbox border clamping), `FILL_CROP` (viewport offset compensation), and `STRETCH` (linear scaling).
+- **Asynchronous UIBC Network Client (`uibc/UibcManager.kt`)**:
+  - Connects to Windows Source TCP port with `socket.tcpNoDelay = true` (disabling Nagle's algorithm) for sub-frame response.
+  - Employs a non-blocking coroutine worker channel (`Channel<ByteArray>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)`) to eliminate touch backpressure and drag latency.
+  - Exposes reactive state flows: `isUibcNegotiated`, `isUibcConnected`, `isTouchEnabled`, `packetsSent`, and `lastEventInfo`.
+- **Interactive UI Integration & Controls Accessibility (`MainActivity.kt`)**:
+  - Captures raw touch and stylus events on `SurfaceView.setOnTouchListener` detecting `TOOL_TYPE_STYLUS` and `TOOL_TYPE_FINGER`.
+  - Multi-touch gesture protection: 3-finger tap or floating overlay button toggles controls without conflicting with 1-finger or 2-finger desktop interactions.
+  - Added 1-tap "Touch: ON / OFF" button in the overlay to freeze or resume back-channel input.
+- **Automated Unit Testing & Release Verification (`app/src/test/java/com/example/pad2display/UibcTest.kt`)**:
+  - Tested SingleTouch Down/Move/Up binary packet generation and padding alignment.
+  - Tested coordinate transforms across Fit/Fill/Stretch modes.
+  - Tested RTSP M4/M14 port extraction regex.
+  - Unit tests passed (`./gradlew.bat test`), debug build passed, release build passed (`./gradlew.bat assembleRelease`).
+
+
