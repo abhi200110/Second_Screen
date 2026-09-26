@@ -40,7 +40,12 @@ class MiceDiscoveryService(
     private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var multicastLock: WifiManager.MulticastLock? = null
 
-    private val containerUuid = UUID.randomUUID().toString()
+    private val prefs = context.getSharedPreferences("mice_prefs", Context.MODE_PRIVATE)
+    private val containerUuid: String = prefs.getString("container_id", null) ?: run {
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("container_id", newId).apply()
+        newId
+    }
 
     private val _discoveryState = MutableStateFlow(
         MiceDiscoveryState(containerId = containerUuid)
