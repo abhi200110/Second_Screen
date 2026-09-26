@@ -352,4 +352,17 @@ sequenceDiagram
   - Added unit tests in [`ProtocolTest.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/test/java/com/example/pad2display/ProtocolTest.kt) for `wfd_idr_request` formatting, M16 Session header validation, and NAL extraction.
   - Passed `./gradlew.bat test` (100% success), `./gradlew.bat assembleDebug` (exit code 0), and `./gradlew.bat assembleRelease` (exit code 0).
   - Deployed updated debug APK directly to OnePlus Pad 2 (`4a0a11c1`).
+  - Hardware verified: 35,000+ continuous frames rendered at 60 FPS without freezing.
+
+### Production Release v1.1.0 (Completed)
+- **Version**: `1.1.0` (versionCode 2)
+- **Release Branch**: `main` (commit `a4071ff`)
+- **Git Tag**: [`v1.1.0`](https://github.com/abhi200110/Second_Screen/releases/tag/v1.1.0)
+- **Artifact**: `SecondScreen-v1.1.0.apk` (10.8 MB)
+- **Included Features & Fixes**:
+  - Dedicated Foreground Service (`SecondScreenService`) decoupling media & RTSP pipeline from Activity lifecycle.
+  - Complete stream freeze fix via SPS/PPS caching, `csd-0`/`csd-1` pre-configuration, and RTSP `wfd_idr_request`.
+  - Asynchronous decoupled input queue eliminating UDP receive thread stalls and packet loss.
+  - Bidirectional M16 keep-alive exchanges every 10 seconds.
+  - Comprehensive unit test suite with 100% pass rate.
 
