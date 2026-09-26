@@ -80,12 +80,19 @@ class MiceDiscoveryService(
             lastError = null
         )
 
+        val formattedContainerId = if (containerUuid.startsWith("{") && containerUuid.endsWith("}")) {
+            containerUuid
+        } else {
+            "{$containerUuid}"
+        }
+
         // 1. Register _display._tcp per [MS-MICE] 3.1.3
         val displayServiceInfo = NsdServiceInfo().apply {
             serviceName = deviceName
             serviceType = MICE_SERVICE_TYPE_DISPLAY
             port = MICE_TCP_PORT
-            setAttribute("container_id", containerUuid)
+            setAttribute("container_id", formattedContainerId)
+            setAttribute("wfd_ctrl_port", "7236")
         }
 
         displayRegistrationListener = createRegistrationListener(MICE_SERVICE_TYPE_DISPLAY) { registered ->
@@ -109,7 +116,8 @@ class MiceDiscoveryService(
             serviceName = deviceName
             serviceType = MICE_SERVICE_TYPE_MIRACAST
             port = MICE_TCP_PORT
-            setAttribute("container_id", containerUuid)
+            setAttribute("container_id", formattedContainerId)
+            setAttribute("wfd_ctrl_port", "7236")
         }
 
         miracastRegistrationListener = createRegistrationListener(MICE_SERVICE_TYPE_MIRACAST) { registered ->

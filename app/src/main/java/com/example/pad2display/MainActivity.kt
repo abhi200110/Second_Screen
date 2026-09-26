@@ -157,30 +157,26 @@ fun DiagnosticScreen(
         }
     }
 
-    // Keep P2P discovery active continuously so device is always discoverable by Windows
-    LaunchedEffect(Unit) {
-        // Immediately start discovery and configure WFD sink on app launch without initial delay
-        p2pController.startDiscovery { success, msg ->
-            addLog("P2P Discovery: $msg")
-        }
-        p2pController.configureWfdSink(true) { success, msg ->
-            addLog("WFD Sink: $msg")
-        }
-        while (true) {
-            delay(10000)
-            if (!p2pData.isDiscoveryActive) {
-                p2pController.startDiscovery { _, _ -> }
-            }
-        }
-    }
-
-    // Synchronize WFD Sink beacon and P2P listen state on mode change
+    // Synchronize discovery state with selected connection mode
     LaunchedEffect(selectedMode) {
-        p2pController.configureWfdSink(true) { success, msg ->
-            addLog("WFD Sink ($selectedMode): $msg")
-        }
-        p2pController.startDiscovery { success, msg ->
-            addLog("Wi-Fi Scan ($selectedMode): $msg")
+        if (selectedMode == MirrorConnectionMode.DIRECT_P2P) {
+            p2pController.configureWfdSink(true) { success, msg ->
+                addLog("WFD Sink (Direct P2P): $msg")
+            }
+            p2pController.startDiscovery { success, msg ->
+                addLog("P2P Discovery: $msg")
+            }
+            while (true) {
+                delay(15000)
+                if (!p2pData.isDiscoveryActive && selectedMode == MirrorConnectionMode.DIRECT_P2P) {
+                    p2pController.startDiscovery { _, _ -> }
+                }
+            }
+        } else {
+            // When in Wi-Fi Router mode (MS-MICE), discovery is handled via mDNS / DNS-SD
+            if (p2pData.isDiscoveryActive) {
+                p2pController.stopDiscovery { _, _ -> }
+            }
         }
     }
 
