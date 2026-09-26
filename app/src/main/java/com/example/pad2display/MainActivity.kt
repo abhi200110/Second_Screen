@@ -50,31 +50,21 @@ import com.example.pad2display.media.TsDemuxer
 import com.example.pad2display.media.VideoDecoder
 import com.example.pad2display.media.VideoFormatInfo
 import com.example.pad2display.mice.MiceDiscoveryService
+import com.example.pad2display.mice.MiceDiscoveryState
 import com.example.pad2display.mice.MiceServer
+import com.example.pad2display.mice.MiceServerState
 import com.example.pad2display.rtsp.DEFAULT_RTSP_PORT
 import com.example.pad2display.rtsp.RtspEngineState
-import com.example.pad2display.rtsp.RtspServer
+import com.example.pad2display.service.ConnectionState
+import com.example.pad2display.service.MirrorConnectionMode
+import com.example.pad2display.service.SecondScreenService
 import kotlinx.coroutines.delay
 
-enum class MirrorConnectionMode(
-    val title: String,
-    val subtitle: String,
-    val badge: String,
-    val icon: ImageVector
-) {
-    INFRASTRUCTURE_MICE(
-        title = "Wi-Fi Router Mode (MS-MICE)",
-        subtitle = "Connects over local Wi-Fi • Internet active • Zero WPS prompt",
-        badge = "RECOMMENDED",
-        icon = Icons.Default.Wifi
-    ),
-    DIRECT_P2P(
-        title = "Direct P2P Mode (Wi-Fi Direct)",
-        subtitle = "Offline direct connection • No router needed • Pure 802.11 Direct",
-        badge = "OFFLINE",
-        icon = Icons.Default.WifiTethering
-    )
-}
+val MirrorConnectionMode.icon: ImageVector
+    get() = when (this) {
+        MirrorConnectionMode.INFRASTRUCTURE_MICE -> Icons.Default.Wifi
+        MirrorConnectionMode.DIRECT_P2P -> Icons.Default.WifiTethering
+    }
 
 class MainActivity : ComponentActivity() {
 
@@ -84,7 +74,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         p2pController = P2pDiagnosticsController(this)
-        Log.i(logTag, "Pad2WirelessDisplay diagnostic activity started.")
+        Log.i(logTag, "SecondScreen diagnostic activity started.")
+
+        // Start Foreground Service so mirroring session survives activity recreation and backgrounding
+        SecondScreenService.start(this)
 
         setContent {
             MaterialTheme(
@@ -125,75 +118,30 @@ fun DiagnosticScreen(
 ) {
     val context = LocalContext.current
 
-    // Live State
+    // Foreground Service Instance
+    val service by SecondScreenService.instance.collectAsState()
+
+    // Service-backed Live States
+    val connectionState = service?.connectionState?.collectAsState()?.value ?: ConnectionState.DISCONNECTED
+    val selectedMode = service?.connectionMode?.collectAsState()?.value ?: MirrorConnectionMode.INFRASTRUCTURE_MICE
+    val selectedResolution = service?.resolutionPreference?.collectAsState()?.value ?: ResolutionPreference.FHD_1080P
+    val rtspState = service?.rtspState?.collectAsState()?.value ?: RtspEngineState()
+    val rtpStats = service?.rtpStats?.collectAsState()?.value ?: RtpReceiverStats()
+    val miceDiscoveryState = service?.miceDiscoveryState?.collectAsState()?.value ?: MiceDiscoveryState()
+    val miceServerState = service?.miceServerState?.collectAsState()?.value ?: MiceServerState()
+    val activeFormat = service?.videoFormat?.collectAsState()?.value
+    val eventLogs = service?.eventLogs?.collectAsState()?.value ?: listOf("Initializing SecondScreen Service...")
+    var logsCleared by remember { mutableStateOf(false) }
+    val displayLogs = if (logsCleared) emptyList() else eventLogs
+
+    // Device & Network Diagnostics
     var deviceData by remember { mutableStateOf(DeviceInfoProvider.getDiagnostics(context)) }
     var wifiData by remember { mutableStateOf(WifiDiagnosticsProvider.getDiagnostics(context)) }
     val p2pData by p2pController.p2pStateFlow.collectAsState()
 
-    var eventLogs by remember { mutableStateOf(listOf("Diagnostic subsystem initialized at ${java.util.Date()}")) }
-
     fun addLog(msg: String) {
-        val entry = "[${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())}] $msg"
-        eventLogs = listOf(entry) + eventLogs.take(40)
         onLog(msg)
-    }
-
-    // Active Connection Mode
-    var selectedMode by remember { mutableStateOf(MirrorConnectionMode.INFRASTRUCTURE_MICE) }
-
-    // Video Decoder & Demuxer Pipeline
-    val videoDecoder = remember {
-        VideoDecoder { logMsg ->
-            addLog(logMsg)
-        }
-    }
-    val tsDemuxer = remember {
-        TsDemuxer { data, length, ptsUs ->
-            videoDecoder.decodeAccessUnit(data, length, ptsUs)
-        }
-    }
-
-    // Media Pipeline: RTP Receiver (UDP 19000)
-    val rtpReceiver = remember {
-        RtpReceiver(port = DEFAULT_RTP_PORT) { logMsg ->
-            addLog(logMsg)
-        }.apply {
-            onDataPacket = { data, offset, len ->
-                tsDemuxer.processRtpPayload(data, offset, len)
-            }
-        }
-    }
-    val rtpStats by rtpReceiver.stats.collectAsState()
-
-    // RTSP Protocol Engine (Port 7236)
-    val rtspServer = remember {
-        RtspServer(
-            context = context,
-            defaultPort = DEFAULT_RTSP_PORT,
-            rtpPort = DEFAULT_RTP_PORT,
-            onStreamStarted = { remoteIp, rtpPort ->
-                addLog(">>> Media pipeline triggered from $remoteIp! Starting RTP receiver on port $rtpPort...")
-                tsDemuxer.reset()
-                rtpReceiver.expectedSenderIp = remoteIp
-                rtpReceiver.start()
-            },
-            onStreamStopped = {
-                rtpReceiver.expectedSenderIp = null
-                rtpReceiver.stop()
-                videoDecoder.releaseCodec()
-            },
-            onLog = { logMsg ->
-                addLog(logMsg)
-            }
-        )
-    }
-    val rtspState by rtspServer.serverState.collectAsState()
-
-    var selectedResolution by remember { mutableStateOf(ResolutionPreference.FHD_1080P) }
-
-    LaunchedEffect(selectedResolution) {
-        rtspServer.resolutionPreference = selectedResolution
-        addLog("Resolution preference set to: ${selectedResolution.title}")
+        service?.addLog(msg)
     }
 
     var isFullscreenPlayerOpen by remember { mutableStateOf(false) }
@@ -204,108 +152,44 @@ fun DiagnosticScreen(
         }
     }
 
-    // Mode 1: MS-MICE Components
-    val miceDiscovery = remember {
-        MiceDiscoveryService(context) { logMsg ->
-            addLog(logMsg)
-        }
-    }
-    val miceDiscoveryState by miceDiscovery.discoveryState.collectAsState()
-
-    val miceServer = remember {
-        MiceServer(
-            port = 7250,
-            onSourceReady = { sourceIp, sourceRtspPort, friendlyName ->
-                addLog(">>> [MS-MICE] Source Ready received from '$friendlyName' ($sourceIp:$sourceRtspPort)! Connecting RTSP Client...")
-                rtspServer.connectAsClient(sourceIp, sourceRtspPort)
-            },
-            onStopProjection = {
-                addLog(">>> [MS-MICE] STOP_PROJECTION received from Source! Stopping RTSP...")
-                rtspServer.stop()
-            },
-            onLog = { logMsg ->
-                addLog(logMsg)
-            }
-        )
-    }
-    val miceServerState by miceServer.serverState.collectAsState()
-
-    // Mode Selector Lifecycle Effect
-    LaunchedEffect(selectedMode) {
-        when (selectedMode) {
-            MirrorConnectionMode.INFRASTRUCTURE_MICE -> {
-                addLog("Activating Mode 1: Wi-Fi Router Mode (MS-MICE)...")
-                // Start MS-MICE mDNS discovery and TCP port 7250 server
-                miceDiscovery.startAdvertising("OnePlus Pad 2")
-                miceServer.start()
-                // Always keep RTSP Server listening on 7236 so incoming connections from Windows are accepted!
-                rtspServer.start(DEFAULT_RTSP_PORT)
-
-                // Keep WFD Sink beacon and radio listen mode active so Windows over-the-air scan finds OnePlus Pad 2
-                p2pController.configureWfdSink(true) { success, msg ->
-                    addLog("WFD Beacon: $msg")
-                }
-                p2pController.startDiscovery { success, msg ->
-                    addLog("Wi-Fi Scan Listen: $msg")
-                }
-            }
-            MirrorConnectionMode.DIRECT_P2P -> {
-                addLog("Activating Mode 2: Direct P2P Mode (Wi-Fi Direct)...")
-                // Stop MS-MICE services
-                miceDiscovery.stopAdvertising()
-                miceServer.stop()
-
-                // Start WFD Sink advertisement and RTSP Server listening on 7236
-                rtspServer.start(DEFAULT_RTSP_PORT)
-                p2pController.configureWfdSink(true) { success, msg ->
-                    addLog("WFD Sink Advertisement: $msg")
-                }
-                p2pController.startDiscovery { success, msg ->
-                    addLog("P2P Discovery: $msg")
-                }
-            }
-        }
-    }
-
     // Keep P2P discovery active continuously so device is always discoverable by Windows
     LaunchedEffect(Unit) {
+        // Immediately start discovery and configure WFD sink on app launch without initial delay
+        p2pController.startDiscovery { success, msg ->
+            addLog("P2P Discovery: $msg")
+        }
+        p2pController.configureWfdSink(true) { success, msg ->
+            addLog("WFD Sink: $msg")
+        }
         while (true) {
-            delay(15000)
+            delay(10000)
             if (!p2pData.isDiscoveryActive) {
                 p2pController.startDiscovery { _, _ -> }
             }
         }
     }
 
-    // React to P2P Connection Lifecycle (Windows initiates Wi-Fi Direct connection)
-    DisposableEffect(p2pController) {
+    // Synchronize WFD Sink beacon and P2P listen state on mode change
+    LaunchedEffect(selectedMode) {
+        p2pController.configureWfdSink(true) { success, msg ->
+            addLog("WFD Sink ($selectedMode): $msg")
+        }
+        p2pController.startDiscovery { success, msg ->
+            addLog("Wi-Fi Scan ($selectedMode): $msg")
+        }
+    }
+
+    // Forward P2P Connection Lifecycle to Foreground Service
+    DisposableEffect(p2pController, service) {
         p2pController.onP2pConnected = { isGroupOwner, goAddress ->
-            if (!isGroupOwner) {
-                addLog(">>> [Wi-Fi Direct] Group established! Windows is GO at $goAddress. Connecting RTSP Client to $goAddress:$DEFAULT_RTSP_PORT...")
-                rtspServer.connectAsClient(goAddress, DEFAULT_RTSP_PORT)
-            } else {
-                addLog(">>> [Wi-Fi Direct] Group established! Tablet is GO. RTSP Server listening on $DEFAULT_RTSP_PORT...")
-                rtspServer.start(DEFAULT_RTSP_PORT)
-            }
+            service?.onP2pConnected(isGroupOwner, goAddress)
         }
         p2pController.onP2pDisconnected = {
-            addLog("[Wi-Fi Direct] Group removed. Resetting RTSP Server...")
-            rtspServer.stop()
-            rtspServer.start(DEFAULT_RTSP_PORT)
+            service?.onP2pDisconnected()
         }
         onDispose {
             p2pController.onP2pConnected = null
             p2pController.onP2pDisconnected = null
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            miceDiscovery.stopAdvertising()
-            miceServer.stop()
-            rtspServer.stop()
-            rtpReceiver.stop()
-            videoDecoder.releaseCodec()
         }
     }
 
@@ -319,8 +203,10 @@ fun DiagnosticScreen(
             add(Manifest.permission.CHANGE_WIFI_MULTICAST_STATE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                add(Manifest.permission.POST_NOTIFICATIONS)
             } else {
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
             }
         }
     }
@@ -356,16 +242,22 @@ fun DiagnosticScreen(
 
     if (isFullscreenPlayerOpen) {
         FullscreenPlayerScreen(
-            videoDecoder = videoDecoder,
+            activeFormat = activeFormat,
             rtpStats = rtpStats,
             rtspState = rtspState,
             selectedResolution = selectedResolution,
+            onAttachSurface = { surface ->
+                service?.attachSurface(surface)
+            },
+            onDetachSurface = {
+                service?.detachSurface()
+            },
             onResolutionChanged = { newRes ->
-                selectedResolution = newRes
+                service?.setResolutionPreference(newRes)
             },
             onBack = { isFullscreenPlayerOpen = false },
             onDisconnect = {
-                rtspServer.stop()
+                service?.disconnectSession()
                 isFullscreenPlayerOpen = false
             }
         )
@@ -437,6 +329,7 @@ fun DiagnosticScreen(
                 // Overview Status Banner
                 item {
                     StatusBanner(
+                        connectionState = connectionState,
                         isWifiConnected = wifiData.isConnected,
                         ssid = wifiData.ssid,
                         isP2pReady = p2pData.hasWifiDirectFeature && p2pData.p2pState == "ENABLED",
@@ -450,9 +343,7 @@ fun DiagnosticScreen(
                 ModeSelectorCard(
                     selectedMode = selectedMode,
                     onModeSelected = { newMode ->
-                        if (selectedMode != newMode) {
-                            selectedMode = newMode
-                        }
+                        service?.setConnectionMode(newMode)
                     }
                 )
             }
@@ -462,7 +353,7 @@ fun DiagnosticScreen(
                 ResolutionSelectorCard(
                     selectedResolution = selectedResolution,
                     onResolutionSelected = { newRes ->
-                        selectedResolution = newRes
+                        service?.setResolutionPreference(newRes)
                     }
                 )
             }
@@ -476,10 +367,7 @@ fun DiagnosticScreen(
                             serverState = miceServerState,
                             wifiData = wifiData,
                             onRestart = {
-                                miceDiscovery.stopAdvertising()
-                                miceServer.stop()
-                                miceDiscovery.startAdvertising("OnePlus Pad 2")
-                                miceServer.start()
+                                service?.restartActiveMode()
                                 addLog("Restarted MS-MICE services")
                             }
                         )
@@ -510,6 +398,7 @@ fun DiagnosticScreen(
             // RTSP & RTP Streaming Pipeline Card
             item {
                 StreamingPipelineCard(
+                    connectionState = connectionState,
                     rtspState = rtspState,
                     rtpStats = rtpStats
                 )
@@ -631,7 +520,7 @@ fun DiagnosticScreen(
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            TextButton(onClick = { eventLogs = emptyList() }) {
+                            TextButton(onClick = { logsCleared = true }) {
                                 Text("Clear", fontSize = 11.sp)
                             }
                         }
@@ -641,7 +530,7 @@ fun DiagnosticScreen(
                                 .fillMaxWidth()
                                 .heightIn(max = 240.dp)
                         ) {
-                            for (log in eventLogs) {
+                            for (log in displayLogs) {
                                 Text(
                                     log,
                                     fontSize = 11.sp,
@@ -672,10 +561,12 @@ fun DiagnosticScreen(
  */
 @Composable
 fun FullscreenPlayerScreen(
-    videoDecoder: VideoDecoder,
+    activeFormat: VideoFormatInfo?,
     rtpStats: RtpReceiverStats,
     rtspState: RtspEngineState,
     selectedResolution: ResolutionPreference,
+    onAttachSurface: (android.view.Surface) -> Unit,
+    onDetachSurface: () -> Unit,
     onResolutionChanged: (ResolutionPreference) -> Unit,
     onBack: () -> Unit,
     onDisconnect: () -> Unit
@@ -683,7 +574,6 @@ fun FullscreenPlayerScreen(
     var showControls by remember { mutableStateOf(true) }
     var scaleMode by remember { mutableStateOf(DisplayScaleMode.FIT) }
     var showResMenu by remember { mutableStateOf(false) }
-    val activeFormat by videoDecoder.activeFormat.collectAsState()
 
     Box(
         modifier = Modifier
@@ -724,13 +614,17 @@ fun FullscreenPlayerScreen(
                     SurfaceView(context).apply {
                         holder.addCallback(object : SurfaceHolder.Callback {
                             override fun surfaceCreated(holder: SurfaceHolder) {
-                                videoDecoder.setSurface(holder.surface)
+                                onAttachSurface(holder.surface)
                             }
 
-                            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+                            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                                if (holder.surface.isValid) {
+                                    onAttachSurface(holder.surface)
+                                }
+                            }
 
                             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                                videoDecoder.setSurface(null)
+                                onDetachSurface()
                             }
                         })
                     }
@@ -1239,10 +1133,11 @@ fun P2pWfdStatusCard(
  */
 @Composable
 fun StreamingPipelineCard(
+    connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     rtspState: com.example.pad2display.rtsp.RtspEngineState,
     rtpStats: com.example.pad2display.media.RtpReceiverStats
 ) {
-    val isStreaming = rtspState.isStreaming || rtpStats.packetsReceived > 0
+    val isStreaming = connectionState.isStreaming || rtspState.isStreaming || rtpStats.packetsReceived > 0
     val cardColor = if (isStreaming) Color(0xFF1B5E20) else MaterialTheme.colorScheme.surface
 
     Card(
@@ -1260,7 +1155,15 @@ fun StreamingPipelineCard(
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(if (isStreaming) Color(0xFF00E676) else if (rtspState.isConnected) Color(0xFFFFD740) else Color.Gray)
+                            .background(
+                                when (connectionState) {
+                                    ConnectionState.STREAMING -> Color(0xFF00E676)
+                                    ConnectionState.CONNECTING, ConnectionState.NEGOTIATING -> Color(0xFFFFD740)
+                                    ConnectionState.INTERRUPTED, ConnectionState.RECONNECTING -> Color(0xFFFF5252)
+                                    ConnectionState.DISCOVERING -> Color(0xFF00B0FF)
+                                    ConnectionState.DISCONNECTED -> Color.Gray
+                                }
+                            )
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -1272,11 +1175,17 @@ fun StreamingPipelineCard(
                 }
 
                 Surface(
-                    color = if (isStreaming) Color(0xFF00E676) else Color.Gray,
+                    color = when (connectionState) {
+                        ConnectionState.STREAMING -> Color(0xFF00E676)
+                        ConnectionState.CONNECTING, ConnectionState.NEGOTIATING -> Color(0xFFFFD740)
+                        ConnectionState.INTERRUPTED, ConnectionState.RECONNECTING -> Color(0xFFFF5252)
+                        ConnectionState.DISCOVERING -> Color(0xFF00B0FF)
+                        ConnectionState.DISCONNECTED -> Color.Gray
+                    },
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        if (isStreaming) "STREAMING ACTIVE" else if (rtspState.isConnected) "HANDSHAKE" else "STANDBY",
+                        connectionState.name,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.Black,
@@ -1287,6 +1196,7 @@ fun StreamingPipelineCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            KeyValueRow("Connection Lifecycle", "${connectionState.title} (${connectionState.description})")
             KeyValueRow("RTSP Engine Mode", "${rtspState.mode} (${if (rtspState.isConnected) "CONNECTED" else "WAITING"})")
             KeyValueRow("Remote Endpoint", rtspState.remoteAddress)
             KeyValueRow("RTSP Session ID", rtspState.sessionId)
@@ -1300,6 +1210,7 @@ fun StreamingPipelineCard(
 
 @Composable
 fun StatusBanner(
+    connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     isWifiConnected: Boolean,
     ssid: String,
     isP2pReady: Boolean,
@@ -1309,7 +1220,7 @@ fun StatusBanner(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (isWifiConnected) Color(0xFF00391C) else Color(0xFF3E2723)
+            containerColor = if (connectionState.isStreaming || isWifiConnected) Color(0xFF00391C) else Color(0xFF3E2723)
         ),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -1320,21 +1231,21 @@ fun StatusBanner(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = if (isWifiConnected) Icons.Default.CheckCircle else Icons.Default.Warning,
+                imageVector = if (connectionState.isStreaming || isWifiConnected) Icons.Default.CheckCircle else Icons.Default.Warning,
                 contentDescription = null,
-                tint = if (isWifiConnected) Color(0xFF00E676) else Color(0xFFFFAB00),
+                tint = if (connectionState.isStreaming) Color(0xFF00E676) else if (isWifiConnected) Color(0xFF40C4FF) else Color(0xFFFFAB00),
                 modifier = Modifier.size(36.dp)
             )
             Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text(
-                    text = if (isWifiConnected) "Wi-Fi Connected: $ssid" else "Wi-Fi Disconnected",
+                    text = if (connectionState.isStreaming) "SecondScreen Active: ${connectionState.title}" else if (isWifiConnected) "Wi-Fi: $ssid" else "Wi-Fi Disconnected",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     color = Color.White
                 )
                 Text(
-                    text = "P2P: $p2pState | Discovery: ${if (isDiscoveryActive) "Active" else "Idle"}",
+                    text = "State: ${connectionState.title} | P2P: $p2pState | Discovery: ${if (isDiscoveryActive) "Active" else "Idle"}",
                     fontSize = 12.sp,
                     color = Color(0xFFB0BEC5)
                 )

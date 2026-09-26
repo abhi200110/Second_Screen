@@ -7,6 +7,20 @@ Rather than relying on unverified assumptions, every protocol parameter, RTSP ex
 
 ---
 
+## Mandatory Git Branching & Release Workflow
+Governed by the 19-section [**Mandatory Git Development & Release Criteria**](.agents/rules/git-workflow.md):
+- **`main` Branch**: Reserved strictly for official, fully-tested, signed production releases (e.g. `v1.0.0`, `v1.1.0`). Direct development commits on `main` are strictly prohibited.
+- **`dev` Branch**: Active integration and staging branch. Code from feature branches merges here only after all unit tests and builds pass.
+- **`feature/*` Branches**: All active feature development, protocol experiments, and bug fixes must be conducted on dedicated feature branches (e.g., `feature/m9-foreground-service-recovery`, `feature/m10-uibc-touch`).
+- **Release Cadence**:
+  1. Develop and verify on `feature/<name>` (`./gradlew.bat test`, `./gradlew.bat assembleDebug`).
+  2. Merge feature branch into `dev`.
+  3. Validate release build on `dev` (`./gradlew.bat assembleRelease`).
+  4. Merge `dev` into `main`, tag the new release version (`git tag -a vX.Y.Z`), and publish release APK.
+- **Golden Rule**: *Feature branches are for development. `dev` is for integration. `main` is for production. No feature is complete until it is implemented, tested, verified, documented, and safely integrated.*
+
+---
+
 ## Authoritative Protocol Specifications & References
 1. **Wi-Fi Display (WFD) Technical Specification v1.1.0** (Wi-Fi Alliance)
 2. **Microsoft Open Specifications**:
@@ -285,3 +299,57 @@ sequenceDiagram
 - **GitHub Release Publication (v1.0.0)**:
   - Created official release on GitHub: [`https://github.com/abhi200110/Second_Screen/releases/tag/v1.0.0`](https://github.com/abhi200110/Second_Screen/releases/tag/v1.0.0).
   - Attached production-ready signed APK: [`SecondScreen-v1.0.0.apk`](https://github.com/abhi200110/Second_Screen/releases/download/v1.0.0/SecondScreen-v1.0.0.apk) (10.8 MB).
+
+### Milestone 9 & 9.5: Foreground Service Architecture & Connection Stability (Completed)
+- **Git Branching Strategy Enforced**:
+  - `main`: Production release branch. Only tagged release versions (`v1.0.0`, `v1.1.0`, etc.) live here.
+  - `dev`: Staging and integration branch.
+  - `feature/*`: Specific feature branches for ongoing development (`feature/m9-foreground-service-recovery`).
+- **Product & Engineering Roadmap ([`docs/ROADMAP.md`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/docs/ROADMAP.md))**:
+  - Outlined phased evolution from basic receiver to a complete interactive wireless second monitor (`v1.0.0` through `v2.0.0`).
+- **Foreground Service Architecture ([`SecondScreenService.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/service/SecondScreenService.kt))**:
+  - Moved entire media and networking pipeline (`RtspServer`, `RtpReceiver`, `MiceServer`, `MiceDiscoveryService`, `TsDemuxer`, `VideoDecoder`) into `SecondScreenService`.
+  - Declared `foregroundServiceType="connectedDevice|mediaPlayback"` in `AndroidManifest.xml` with all necessary permissions (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `POST_NOTIFICATIONS`).
+  - Persistent ongoing system notification with live status, bitrate, resolution, packet count, and a direct Disconnect action.
+  - Lifecycle independence: Streaming continues uninterrupted during activity recreation, screen rotation, or app backgrounding.
+- **Dynamic Surface Binding ([`VideoDecoder.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/media/VideoDecoder.kt))**:
+  - Upgraded `VideoDecoder.setSurface()` to dynamically bind new surfaces via `MediaCodec.setOutputSurface(surface)` when available.
+  - When the activity is backgrounded or rotated, the decoder continues processing frames (or maintains sequence parameters / reference frames) without destroying the codec, allowing instant re-rendering without dropping connection.
+- **Connection Lifecycle State Machine ([`ConnectionState.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/service/ConnectionState.kt))**:
+  - Formalized explicit states: `DISCONNECTED`, `DISCOVERING`, `CONNECTING`, `NEGOTIATING`, `STREAMING`, `INTERRUPTED`, `RECONNECTING`.
+  - Implemented watchdog for stream stalls and auto-recovery/re-arming of discovery listeners on unexpected drops.
+- **Automated Test Suite Expansion ([`ProtocolTest.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/test/java/com/example/pad2display/ProtocolTest.kt))**:
+  - Added unit tests for `ConnectionState` lifecycle properties and transitions.
+  - Added unit tests for `MirrorConnectionMode` title and badge consistency.
+  - Verified `./gradlew.bat test` passes 100% across both debug and release variants.
+
+### Stream Freeze Root-Cause Resolution & Real-Time Pipeline Optimization (Completed)
+- **Root-Cause Analysis of Video Freeze**:
+  - When Windows connected, the hardware decoder `c2.qti.avc.decoder` decoded the initial 122 frames and then froze because:
+    1. Initial SPS/PPS parameter sets and IDR keyframe arrived during the ~250ms Compose `SurfaceView` layout phase before `surfaceCreated` was invoked. Without caching, the decoder received subsequent P-frames without reference frames.
+    2. Lack of `wfd_idr_request` meant Windows only sent delta P-frames, leaving newly attached or recovered surfaces blank.
+    3. `VideoDecoder.decodeAccessUnit` ran synchronously on the UDP socket thread; blocking on `dequeueInputBuffer(10000)` caused kernel socket buffer overflow and packet loss during high-bitrate bursts.
+    4. M16 keep-alive responses omitted the active `Session:` header, causing Windows session watchdog to pause the stream.
+- **SPS & PPS Parameter Set Caching & MediaCodec Pre-Configuration ([`VideoDecoder.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/media/VideoDecoder.kt))**:
+  - Implemented Annex B zero-allocation NAL unit parser extracting and caching SPS (`0x67`) and PPS (`0x68`) byte buffers.
+  - Injected cached SPS (`csd-0`) and PPS (`csd-1`) directly into `MediaFormat` on decoder configuration, ensuring the Qualcomm decoder initializes with exact stream geometry before receiving video data.
+  - Pre-buffered pending IDR keyframes so that attaching a new `Surface` renders the latest image instantaneously.
+- **Decoupled Asynchronous Input Queue**:
+  - Introduced a 60-slot concurrent `LinkedBlockingQueue` with a dedicated feeder worker coroutine in `VideoDecoder`.
+  - `RtpReceiver` and `TsDemuxer` now process UDP packets without being blocked by MediaCodec input buffer availability, eliminating UDP socket drops.
+  - Automatically drops oldest non-keyframes when backpressure exceeds 45 frames to prevent latency spikes while prioritizing IDR keyframes.
+- **RTSP IDR Keyframe Request (`wfd_idr_request`) ([`RtspServer.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/rtsp/RtspServer.kt))**:
+  - Implemented `RtspServer.requestIdrFrame()` dispatching RTSP `SET_PARAMETER` with `wfd_idr_request\r\n` and active `Session:` header.
+  - Automatically triggered on initial stream startup (250ms delay), on surface re-attachment, and upon decoder stall detection.
+- **Proactive Keep-Alive & Session Header Compliance**:
+  - Enhanced M16 `GET_PARAMETER` keep-alive handler to include the mandatory `Session: $currentSessionId` header in 200 OK responses.
+  - Implemented a proactive background coroutine sending periodic RTSP `GET_PARAMETER` probes every 10 seconds while streaming.
+- **Dynamic Surface Lifecycle & Self-Healing Watchdog ([`MainActivity.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/MainActivity.kt) & [`SecondScreenService.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/service/SecondScreenService.kt))**:
+  - Attached surface on both `surfaceCreated` and `surfaceChanged` callbacks in `FullscreenPlayerScreen`.
+  - Upgraded service watchdog to detect video decoder stalls (bitrate > 0.5 Mbps but zero rendered frames for 2s) and automatically trigger `requestIdrFrame()`.
+  - Transitioned logging to `Log.w` to bypass OxygenOS `persist.sys.assert.panic=false` suppression.
+- **Automated Unit Testing & Build Validation**:
+  - Added unit tests in [`ProtocolTest.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/test/java/com/example/pad2display/ProtocolTest.kt) for `wfd_idr_request` formatting, M16 Session header validation, and NAL extraction.
+  - Passed `./gradlew.bat test` (100% success), `./gradlew.bat assembleDebug` (exit code 0), and `./gradlew.bat assembleRelease` (exit code 0).
+  - Deployed updated debug APK directly to OnePlus Pad 2 (`4a0a11c1`).
+
