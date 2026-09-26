@@ -80,7 +80,7 @@ class TsDemuxer(
             if (p0 == 0x00 && p1 == 0x00 && p2 == 0x01 && streamId in 0xE0..0xEF) {
                 if (videoPid != pid) {
                     videoPid = pid
-                    Log.i("TsDemuxer", "Discovered Video Stream PID: 0x${pid.toString(16).uppercase()} ($pid)")
+                    Log.w("TsDemuxer", "Discovered Video Stream PID: 0x${pid.toString(16).uppercase()} ($pid)")
                 }
             }
         }
@@ -99,18 +99,8 @@ class TsDemuxer(
                 val pesHeaderDataLen = data[payloadStart + 8].toInt() and 0xFF
                 val pesHeaderTotal = 9 + pesHeaderDataLen
 
-                // Extract PTS if present (flags2 & 0x80 != 0)
-                if ((flags2 and 0x80) != 0 && payloadLen >= 14) {
-                    val pts0 = (data[payloadStart + 9].toInt() and 0x0E).toLong() shl 29
-                    val pts1 = (data[payloadStart + 10].toInt() and 0xFF).toLong() shl 22
-                    val pts2 = (data[payloadStart + 11].toInt() and 0xFE).toLong() shl 14
-                    val pts3 = (data[payloadStart + 12].toInt() and 0xFF).toLong() shl 7
-                    val pts4 = (data[payloadStart + 13].toInt() and 0xFE).toLong() ushr 1
-                    val pts90k = pts0 or pts1 or pts2 or pts3 or pts4
-                    currentPtsUs = (pts90k * 1000) / 90
-                } else {
-                    currentPtsUs = System.nanoTime() / 1000
-                }
+                // Monotonic local timestamp to prevent PTS jitter and clock drift stalls
+                currentPtsUs = System.nanoTime() / 1000
 
                 val esStart = payloadStart + pesHeaderTotal
                 if (esStart < packetEnd) {

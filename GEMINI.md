@@ -323,3 +323,33 @@ sequenceDiagram
   - Added unit tests for `MirrorConnectionMode` title and badge consistency.
   - Verified `./gradlew.bat test` passes 100% across both debug and release variants.
 
+### Stream Freeze Root-Cause Resolution & Real-Time Pipeline Optimization (Completed)
+- **Root-Cause Analysis of Video Freeze**:
+  - When Windows connected, the hardware decoder `c2.qti.avc.decoder` decoded the initial 122 frames and then froze because:
+    1. Initial SPS/PPS parameter sets and IDR keyframe arrived during the ~250ms Compose `SurfaceView` layout phase before `surfaceCreated` was invoked. Without caching, the decoder received subsequent P-frames without reference frames.
+    2. Lack of `wfd_idr_request` meant Windows only sent delta P-frames, leaving newly attached or recovered surfaces blank.
+    3. `VideoDecoder.decodeAccessUnit` ran synchronously on the UDP socket thread; blocking on `dequeueInputBuffer(10000)` caused kernel socket buffer overflow and packet loss during high-bitrate bursts.
+    4. M16 keep-alive responses omitted the active `Session:` header, causing Windows session watchdog to pause the stream.
+- **SPS & PPS Parameter Set Caching & MediaCodec Pre-Configuration ([`VideoDecoder.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/media/VideoDecoder.kt))**:
+  - Implemented Annex B zero-allocation NAL unit parser extracting and caching SPS (`0x67`) and PPS (`0x68`) byte buffers.
+  - Injected cached SPS (`csd-0`) and PPS (`csd-1`) directly into `MediaFormat` on decoder configuration, ensuring the Qualcomm decoder initializes with exact stream geometry before receiving video data.
+  - Pre-buffered pending IDR keyframes so that attaching a new `Surface` renders the latest image instantaneously.
+- **Decoupled Asynchronous Input Queue**:
+  - Introduced a 60-slot concurrent `LinkedBlockingQueue` with a dedicated feeder worker coroutine in `VideoDecoder`.
+  - `RtpReceiver` and `TsDemuxer` now process UDP packets without being blocked by MediaCodec input buffer availability, eliminating UDP socket drops.
+  - Automatically drops oldest non-keyframes when backpressure exceeds 45 frames to prevent latency spikes while prioritizing IDR keyframes.
+- **RTSP IDR Keyframe Request (`wfd_idr_request`) ([`RtspServer.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/rtsp/RtspServer.kt))**:
+  - Implemented `RtspServer.requestIdrFrame()` dispatching RTSP `SET_PARAMETER` with `wfd_idr_request\r\n` and active `Session:` header.
+  - Automatically triggered on initial stream startup (250ms delay), on surface re-attachment, and upon decoder stall detection.
+- **Proactive Keep-Alive & Session Header Compliance**:
+  - Enhanced M16 `GET_PARAMETER` keep-alive handler to include the mandatory `Session: $currentSessionId` header in 200 OK responses.
+  - Implemented a proactive background coroutine sending periodic RTSP `GET_PARAMETER` probes every 10 seconds while streaming.
+- **Dynamic Surface Lifecycle & Self-Healing Watchdog ([`MainActivity.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/MainActivity.kt) & [`SecondScreenService.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/main/java/com/example/pad2display/service/SecondScreenService.kt))**:
+  - Attached surface on both `surfaceCreated` and `surfaceChanged` callbacks in `FullscreenPlayerScreen`.
+  - Upgraded service watchdog to detect video decoder stalls (bitrate > 0.5 Mbps but zero rendered frames for 2s) and automatically trigger `requestIdrFrame()`.
+  - Transitioned logging to `Log.w` to bypass OxygenOS `persist.sys.assert.panic=false` suppression.
+- **Automated Unit Testing & Build Validation**:
+  - Added unit tests in [`ProtocolTest.kt`](file:///D:/CODE_PLAYGROUND/SCREEN_MIRROR/app/src/test/java/com/example/pad2display/ProtocolTest.kt) for `wfd_idr_request` formatting, M16 Session header validation, and NAL extraction.
+  - Passed `./gradlew.bat test` (100% success), `./gradlew.bat assembleDebug` (exit code 0), and `./gradlew.bat assembleRelease` (exit code 0).
+  - Deployed updated debug APK directly to OnePlus Pad 2 (`4a0a11c1`).
+

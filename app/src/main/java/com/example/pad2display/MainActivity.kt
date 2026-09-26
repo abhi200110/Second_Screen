@@ -141,6 +141,7 @@ fun DiagnosticScreen(
 
     fun addLog(msg: String) {
         onLog(msg)
+        service?.addLog(msg)
     }
 
     var isFullscreenPlayerOpen by remember { mutableStateOf(false) }
@@ -153,11 +154,28 @@ fun DiagnosticScreen(
 
     // Keep P2P discovery active continuously so device is always discoverable by Windows
     LaunchedEffect(Unit) {
+        // Immediately start discovery and configure WFD sink on app launch without initial delay
+        p2pController.startDiscovery { success, msg ->
+            addLog("P2P Discovery: $msg")
+        }
+        p2pController.configureWfdSink(true) { success, msg ->
+            addLog("WFD Sink: $msg")
+        }
         while (true) {
-            delay(15000)
+            delay(10000)
             if (!p2pData.isDiscoveryActive) {
                 p2pController.startDiscovery { _, _ -> }
             }
+        }
+    }
+
+    // Synchronize WFD Sink beacon and P2P listen state on mode change
+    LaunchedEffect(selectedMode) {
+        p2pController.configureWfdSink(true) { success, msg ->
+            addLog("WFD Sink ($selectedMode): $msg")
+        }
+        p2pController.startDiscovery { success, msg ->
+            addLog("Wi-Fi Scan ($selectedMode): $msg")
         }
     }
 
@@ -599,7 +617,11 @@ fun FullscreenPlayerScreen(
                                 onAttachSurface(holder.surface)
                             }
 
-                            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+                            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                                if (holder.surface.isValid) {
+                                    onAttachSurface(holder.surface)
+                                }
+                            }
 
                             override fun surfaceDestroyed(holder: SurfaceHolder) {
                                 onDetachSurface()

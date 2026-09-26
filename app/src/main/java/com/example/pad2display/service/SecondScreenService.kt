@@ -113,7 +113,9 @@ class SecondScreenService : Service() {
 
     private var lastRenderSurface: Surface? = null
     private var lastPacketsReceived = 0L
+    private var lastFramesRendered = 0L
     private var stallCheckSeconds = 0
+    private var decoderStallSeconds = 0
 
     // ------------------------------------------------------------------------
     // Lifecycle
@@ -188,6 +190,10 @@ class SecondScreenService : Service() {
         // Video Decoder
         videoDecoder = VideoDecoder { logMsg ->
             addLog(logMsg)
+        }.apply {
+            onRequestKeyframe = {
+                rtspServer.requestIdrFrame()
+            }
         }
 
         // MPEG-TS Demuxer
@@ -216,6 +222,12 @@ class SecondScreenService : Service() {
                 rtpReceiver.start()
                 _connectionState.value = ConnectionState.STREAMING
                 updateNotification()
+
+                // Request initial IDR keyframe after short delay so SurfaceView can finish attaching
+                serviceScope.launch {
+                    delay(250)
+                    rtspServer.requestIdrFrame()
+                }
             },
             onStreamStopped = {
                 addLog("Media stream stopped. Resetting RTP receiver and decoder...")
@@ -299,6 +311,10 @@ class SecondScreenService : Service() {
                 delay(2000)
                 if (_connectionState.value == ConnectionState.STREAMING) {
                     val currentPackets = rtpReceiver.stats.value.packetsReceived
+                    val currentBitrate = rtpReceiver.stats.value.bitrateMbps
+                    val currentRendered = videoDecoder.framesRenderedCount
+
+                    // 1. Packet flow stall detection
                     if (currentPackets == lastPacketsReceived && currentPackets > 0) {
                         stallCheckSeconds += 2
                         if (stallCheckSeconds >= 10 && stallCheckSeconds % 10 == 0) {
@@ -311,10 +327,25 @@ class SecondScreenService : Service() {
                     } else {
                         stallCheckSeconds = 0
                     }
+
+                    // 2. Decoder freeze detection: packets arriving but no new frames rendered
+                    if (currentBitrate > 0.5 && currentRendered == lastFramesRendered && currentRendered > 0) {
+                        decoderStallSeconds += 2
+                        if (decoderStallSeconds >= 2) {
+                            addLog("Video freeze detected: RTP active (${currentBitrate} Mbps) but no frames rendered for ${decoderStallSeconds}s. Requesting IDR keyframe...")
+                            rtspServer.requestIdrFrame()
+                            decoderStallSeconds = 0
+                        }
+                    } else {
+                        decoderStallSeconds = 0
+                    }
+
                     lastPacketsReceived = currentPackets
+                    lastFramesRendered = currentRendered
                     updateNotification()
                 } else {
                     stallCheckSeconds = 0
+                    decoderStallSeconds = 0
                 }
             }
         }
@@ -331,6 +362,9 @@ class SecondScreenService : Service() {
     fun attachSurface(surface: Surface) {
         lastRenderSurface = surface
         videoDecoder.setSurface(surface)
+        if (_connectionState.value == ConnectionState.STREAMING) {
+            rtspServer.requestIdrFrame()
+        }
         addLog("Surface attached to VideoDecoder (${surface.isValid})")
     }
 
@@ -420,11 +454,11 @@ class SecondScreenService : Service() {
         disconnectSession()
     }
 
-    private fun addLog(msg: String) {
+    fun addLog(msg: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
         val entry = "[$time] $msg"
         _eventLogs.value = listOf(entry) + _eventLogs.value.take(49)
-        Log.i(TAG, msg)
+        Log.w(TAG, msg)
     }
 
     // ------------------------------------------------------------------------

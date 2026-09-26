@@ -63,6 +63,75 @@ class RtspServer(
     private val sinkCSeq = AtomicInteger(1)
     private var currentPresentationUrl = ""
     private var currentSessionId = ""
+    @Volatile
+    private var activeWriter: OutputStreamWriter? = null
+    @Volatile
+    private var activeRemoteIp: String = "127.0.0.1"
+    private var keepAliveJob: Job? = null
+
+    /**
+     * Request an immediate IDR Keyframe from Windows Source (wfd_idr_request).
+     * Commands Windows NVENC/QuickSync/AMF hardware encoder to generate a fresh I-frame
+     * with parameter sets (SPS/PPS) to instantly recover video decoding without delay.
+     */
+    fun requestIdrFrame() {
+        val writer = activeWriter ?: return
+        val url = resolveStreamUrl(activeRemoteIp)
+        val cseq = sinkCSeq.getAndIncrement()
+        val body = "wfd_idr_request\r\n"
+        val bodyBytes = body.toByteArray(Charsets.UTF_8)
+        val req = buildString {
+            append("SET_PARAMETER $url RTSP/1.0\r\n")
+            append("CSeq: $cseq\r\n")
+            if (currentSessionId.isNotEmpty()) {
+                append("Session: $currentSessionId\r\n")
+            }
+            append("Content-Type: text/parameters\r\n")
+            append("Content-Length: ${bodyBytes.size}\r\n")
+            append("\r\n")
+            append(body)
+        }
+        scope.launch {
+            try {
+                synchronized(writer) {
+                    writer.write(req)
+                    writer.flush()
+                }
+                log(">>> Dispatched IDR Keyframe Request (wfd_idr_request) to Windows Source (CSeq: $cseq)")
+            } catch (e: Exception) {
+                log("Failed to send IDR request: ${e.message}")
+            }
+        }
+    }
+
+    private fun startKeepAlive() {
+        keepAliveJob?.cancel()
+        keepAliveJob = scope.launch {
+            while (isActive && _engineState.value.isStreaming) {
+                delay(10000)
+                val writer = activeWriter ?: break
+                val url = resolveStreamUrl(activeRemoteIp)
+                val cseq = sinkCSeq.getAndIncrement()
+                val req = buildString {
+                    append("GET_PARAMETER $url RTSP/1.0\r\n")
+                    append("CSeq: $cseq\r\n")
+                    if (currentSessionId.isNotEmpty()) {
+                        append("Session: $currentSessionId\r\n")
+                    }
+                    append("\r\n")
+                }
+                try {
+                    synchronized(writer) {
+                        writer.write(req)
+                        writer.flush()
+                    }
+                    log(">>> Dispatched M16 Keep-Alive probe to Windows Source (CSeq: $cseq)")
+                } catch (e: Exception) {
+                    log("Keep-alive dispatch error: ${e.message}")
+                }
+            }
+        }
+    }
 
     /**
      * Start RTSP Server for Mode 2 (Wi-Fi Direct P2P) or Mode 1 (MS-MICE):
@@ -269,6 +338,10 @@ class RtspServer(
 
     @Synchronized
     fun stop() {
+        keepAliveJob?.cancel()
+        keepAliveJob = null
+        activeWriter = null
+
         try {
             serverSocket?.close()
         } catch (_: Exception) {}
@@ -308,6 +381,8 @@ class RtspServer(
             socket.soTimeout = 30000 // 30-second timeout for keep-alive/inactivity detection
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
             val writer = OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8)
+            activeWriter = writer
+            activeRemoteIp = remoteIp
 
             // When connecting to Windows Source, the Source normally initiates M1 (OPTIONS) immediately.
             // If Source does not send M1 within 1.5s, proactively send M1 so neither side stalls.
@@ -319,8 +394,10 @@ class RtspServer(
                         val cseq = sinkCSeq.getAndIncrement()
                         val m1 = "OPTIONS * RTSP/1.0\r\nCSeq: $cseq\r\nRequire: org.wfa.wfd1.0\r\n\r\n"
                         try {
-                            writer.write(m1)
-                            writer.flush()
+                            synchronized(writer) {
+                                writer.write(m1)
+                                writer.flush()
+                            }
                             log("Sent proactive M1 (OPTIONS) to Source:\n$m1")
                         } catch (_: Exception) {}
                     }
@@ -383,8 +460,10 @@ class RtspServer(
                     // Incoming Request from Source (e.g. M1, M3, M4, M5, M16 Keep-Alive, TEARDOWN)
                     val response = handleRtspRequest(lines, body, writer, remoteIp)
                     if (response != null) {
-                        writer.write(response)
-                        writer.flush()
+                        synchronized(writer) {
+                            writer.write(response)
+                            writer.flush()
+                        }
                         log("Sent response to $remoteAddr:\n$response")
                     }
                 }
@@ -393,6 +472,9 @@ class RtspServer(
             log("Session with $remoteAddr error: ${e.message}")
         } finally {
             fallbackM1Job?.cancel()
+            keepAliveJob?.cancel()
+            keepAliveJob = null
+            activeWriter = null
             try {
                 socket.close()
             } catch (_: Exception) {}
@@ -470,11 +552,14 @@ class RtspServer(
             "GET_PARAMETER" -> {
                 if (body.trim().isEmpty()) {
                     // M16 Keep-Alive probe from Windows Source:
-                    // MUST return an empty 200 OK without parameters!
+                    // MUST return 200 OK with Session header per WFD specification!
                     log(">>> Received Keep-Alive (M16 GET_PARAMETER) from Source! Sending 200 OK...")
                     buildString {
                         append("RTSP/1.0 200 OK\r\n")
                         append("CSeq: $cSeq\r\n")
+                        if (currentSessionId.isNotEmpty()) {
+                            append("Session: $currentSessionId\r\n")
+                        }
                         append("\r\n")
                     }
                 } else {
@@ -593,6 +678,7 @@ class RtspServer(
             log(">>> Stage 7 & 8 Complete: PLAY acknowledged by Windows Source! Streaming is LIVE on UDP port $rtpPort!")
             _engineState.value = _engineState.value.copy(isStreaming = true)
             onStreamStarted(remoteIp, rtpPort)
+            startKeepAlive()
             return
         }
     }
@@ -679,7 +765,7 @@ class RtspServer(
     }
 
     private fun log(message: String) {
-        Log.i(TAG, message)
+        Log.w(TAG, message)
         println("[RtspEngine] $message")
         onLog("[RTSP] $message")
     }

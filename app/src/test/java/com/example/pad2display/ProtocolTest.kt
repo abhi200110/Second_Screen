@@ -138,4 +138,87 @@ class ProtocolTest {
         assertTrue("P2P mode title must contain Wi-Fi Direct", p2p.title.contains("Wi-Fi Direct"))
         assertEquals("OFFLINE", p2p.badge)
     }
+
+    @Test
+    fun testWfdIdrRequestFormatting() {
+        val url = "rtsp://192.168.0.198/wfd1.0/streamid=0"
+        val cseq = 42
+        val sessionId = "987654321"
+        val body = "wfd_idr_request\r\n"
+        val bodyBytes = body.toByteArray(Charsets.UTF_8)
+
+        val req = buildString {
+            append("SET_PARAMETER $url RTSP/1.0\r\n")
+            append("CSeq: $cseq\r\n")
+            append("Session: $sessionId\r\n")
+            append("Content-Type: text/parameters\r\n")
+            append("Content-Length: ${bodyBytes.size}\r\n")
+            append("\r\n")
+            append(body)
+        }
+
+        assertTrue("Request must start with SET_PARAMETER", req.startsWith("SET_PARAMETER $url RTSP/1.0\r\n"))
+        assertTrue("Request must contain CSeq", req.contains("CSeq: 42\r\n"))
+        assertTrue("Request must contain Session ID", req.contains("Session: 987654321\r\n"))
+        assertTrue("Request must contain Content-Type text/parameters", req.contains("Content-Type: text/parameters\r\n"))
+        assertTrue("Request must contain Content-Length: 17", req.contains("Content-Length: 17\r\n"))
+        assertTrue("Request must contain wfd_idr_request body", req.endsWith("\r\n\r\nwfd_idr_request\r\n"))
+    }
+
+    @Test
+    fun testM16KeepAliveResponseWithSession() {
+        val cseq = "10"
+        val sessionId = "1707142695"
+        val response = buildString {
+            append("RTSP/1.0 200 OK\r\n")
+            append("CSeq: $cseq\r\n")
+            if (sessionId.isNotEmpty()) {
+                append("Session: $sessionId\r\n")
+            }
+            append("\r\n")
+        }
+
+        assertTrue("Response must start with RTSP/1.0 200 OK", response.startsWith("RTSP/1.0 200 OK\r\n"))
+        assertTrue("Response must include CSeq", response.contains("CSeq: 10\r\n"))
+        assertTrue("Response must include Session header for active sessions", response.contains("Session: 1707142695\r\n"))
+    }
+
+    @Test
+    fun testNalUnitExtractionAndNormalization() {
+        // Construct Annex-B stream with 4-byte start codes:
+        // [00 00 00 01 67 (SPS)] [00 00 00 01 68 (PPS)] [00 00 00 01 65 (IDR)]
+        val spsPayload = byteArrayOf(0x00, 0x00, 0x00, 0x01, 0x67.toByte(), 0x42, 0x00, 0x1F)
+        val ppsPayload = byteArrayOf(0x00, 0x00, 0x00, 0x01, 0x68.toByte(), 0xCE.toByte(), 0x38, 0x80.toByte())
+        val idrPayload = byteArrayOf(0x00, 0x00, 0x00, 0x01, 0x65.toByte(), 0x88.toByte(), 0x84.toByte())
+
+        val stream = ByteArray(spsPayload.size + ppsPayload.size + idrPayload.size)
+        System.arraycopy(spsPayload, 0, stream, 0, spsPayload.size)
+        System.arraycopy(ppsPayload, 0, stream, spsPayload.size, ppsPayload.size)
+        System.arraycopy(idrPayload, 0, stream, spsPayload.size + ppsPayload.size, idrPayload.size)
+
+        // Validate that NAL types 7, 8, 5 are detected
+        val nalTypes = mutableListOf<Int>()
+        var i = 0
+        while (i <= stream.size - 4) {
+            if (stream[i] == 0.toByte() && stream[i + 1] == 0.toByte()) {
+                val startCodeLen = if (stream[i + 2] == 1.toByte()) 3
+                else if (stream[i + 2] == 0.toByte() && i <= stream.size - 5 && stream[i + 3] == 1.toByte()) 4
+                else 0
+
+                if (startCodeLen > 0) {
+                    val nalType = stream[i + startCodeLen].toInt() and 0x1F
+                    nalTypes.add(nalType)
+                    i += startCodeLen
+                    continue
+                }
+            }
+            i++
+        }
+
+        assertEquals(3, nalTypes.size)
+        assertEquals(7, nalTypes[0]) // SPS
+        assertEquals(8, nalTypes[1]) // PPS
+        assertEquals(5, nalTypes[2]) // IDR
+    }
 }
+

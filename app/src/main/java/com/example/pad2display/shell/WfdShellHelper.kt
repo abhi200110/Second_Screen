@@ -96,22 +96,49 @@ object WfdShellHelper {
                     arrayOf(actionListenerClass)
                 ) { _, method, methodArgs ->
                     println("[WFD Shell] setWfdInfo callback: ${method.name} ${methodArgs?.joinToString() ?: ""}")
-                    if (method.name == "onSuccess" && (action == "group" || action == "createGroup")) {
-                        println("[WFD Shell] setWfdInfo succeeded, now creating P2P Group on same channel...")
-                        wifiP2pManager.createGroup(channel, object : WifiP2pManager.ActionListener {
-                            override fun onSuccess() {
-                                println("[WFD Shell] createGroup SUCCESS! Re-applying setWfdInfo to active group...")
-                                if (setWfdInfoMethod.parameterCount == 3) {
-                                    setWfdInfoMethod.invoke(wifiP2pManager, channel, wfdInfo, null)
-                                } else {
-                                    setWfdInfoMethod.invoke(wifiP2pManager, channel, wfdInfo)
+                    if (method.name == "onSuccess") {
+                        if (action == "group" || action == "createGroup") {
+                            println("[WFD Shell] setWfdInfo succeeded, now creating P2P Group on same channel...")
+                            wifiP2pManager.createGroup(channel, object : WifiP2pManager.ActionListener {
+                                override fun onSuccess() {
+                                    println("[WFD Shell] createGroup SUCCESS! Re-applying setWfdInfo to active group...")
+                                    if (setWfdInfoMethod.parameterCount == 3) {
+                                        setWfdInfoMethod.invoke(wifiP2pManager, channel, wfdInfo, null)
+                                    } else {
+                                        setWfdInfoMethod.invoke(wifiP2pManager, channel, wfdInfo)
+                                    }
+                                    println("[WFD Shell] setWfdInfo re-applied to active group! GO WFD IE is confirmed.")
                                 }
-                                println("[WFD Shell] setWfdInfo re-applied to active group! GO WFD IE is confirmed.")
+                                override fun onFailure(reason: Int) {
+                                    println("[WFD Shell] createGroup FAILURE: code $reason")
+                                }
+                            })
+                        } else {
+                            // Standard WFD Sink: Start active peer discovery on social channels
+                            wifiP2pManager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
+                                override fun onSuccess() {
+                                    println("[WFD Shell] discoverPeers SUCCESS: WFD Sink actively listening on social channels (1, 6, 11)!")
+                                }
+                                override fun onFailure(reason: Int) {
+                                    println("[WFD Shell] discoverPeers initially returned: code $reason (app discovery may already be active)")
+                                }
+                            })
+
+                            // Heartbeat thread to keep P2P discovery alive every 60s
+                            kotlin.concurrent.thread(isDaemon = true, name = "WfdDiscoveryHeartbeat") {
+                                while (true) {
+                                    try {
+                                        Thread.sleep(60_000L)
+                                        println("[WFD Shell] Heartbeat: refreshing discoverPeers on UID 2000 channel...")
+                                        wifiP2pManager.discoverPeers(channel, null)
+                                    } catch (_: InterruptedException) {
+                                        break
+                                    } catch (e: Exception) {
+                                        println("[WFD Shell] Heartbeat exception: ${e.message}")
+                                    }
+                                }
                             }
-                            override fun onFailure(reason: Int) {
-                                println("[WFD Shell] createGroup FAILURE: code $reason")
-                            }
-                        })
+                        }
                     }
                     null
                 }
