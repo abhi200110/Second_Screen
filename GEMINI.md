@@ -7,6 +7,18 @@ Rather than relying on unverified assumptions, every protocol parameter, RTSP ex
 
 ---
 
+## Mandatory Git Branching & Release Workflow
+- **`main` Branch**: Reserved strictly for official, fully-tested, signed production releases (e.g. `v1.0.0`, `v1.1.0`). Direct development commits on `main` are strictly prohibited.
+- **`dev` Branch**: Active integration and staging branch. Code from feature branches merges here only after all unit tests and builds pass.
+- **`feature/*` Branches**: All active feature development, protocol experiments, and bug fixes must be conducted on dedicated feature branches (e.g., `feature/m9-foreground-service-recovery`, `feature/m10-uibc-touch`).
+- **Release Cadence**:
+  1. Develop and verify on `feature/<name>` (`./gradlew.bat test`, `./gradlew.bat assembleDebug`).
+  2. Merge feature branch into `dev`.
+  3. Validate release build on `dev` (`./gradlew.bat assembleRelease`).
+  4. Merge `dev` into `main`, tag the new release version (`git tag -a vX.Y.Z`), and publish release APK.
+
+---
+
 ## Authoritative Protocol Specifications & References
 1. **Wi-Fi Display (WFD) Technical Specification v1.1.0** (Wi-Fi Alliance)
 2. **Microsoft Open Specifications**:
